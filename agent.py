@@ -29,7 +29,6 @@ from darts.models import RNNModel, NBEATSModel, TransformerModel, TCNModel
 from darts.dataprocessing.transformers import Scaler
 from darts.metrics import mape
 # Import tools from tool.py
-from tool import (get_stock_company_info, get_stock_technical, get_stock_forecast)
 ## Retrieve API Keys and start OpenAI session
 #  retrieve keys:
 key_file_name = 'api_key'
@@ -62,8 +61,7 @@ def get_historical_data(symbol: str) -> pd.DataFrame:
     Returns DataFrame with 'date' and 'close' columns, ensuring daily frequency.
     """
     start_date = "2024-06-01"  # Fetch from early April to get >30 days
-    end_date = "2025-06-01"
-    url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}?from={start_date}&to={end_date}&apikey={fmp_key}"
+    url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}?from={start_date}&apikey={fmp_key}"
     try:
         response = requests.get(url)
         response.raise_for_status()
