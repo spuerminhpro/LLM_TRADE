@@ -1,0 +1,6 @@
+openai>=1.0.0
+yfinance>=0.2.36
+python-dotenv>=1.0.0
+openai-agents>=0.1.0
+torch>=2.0.0
+darts>=0.25.0 
