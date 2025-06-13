@@ -313,7 +313,7 @@ def get_stock_macd_rsi(symbol: str) -> dict:
         if df.empty:
             return {"error": f"No historical data for symbol: {symbol}"}
         
-        prices = df["close"].to_numpy(dtype='float64')
+        prices = df["close"].to_numpy(dtype='float64')[-26:]
         if len(prices) < 26:
             return {"error": f"Not enough data to compute indicators for {symbol} (need at least 26 days)"}
         
@@ -492,7 +492,7 @@ config = RunConfig(
 async def main():
     output = []
     queries = ["What is the price of NVDA?",
-               "Forecast NVDA price after 50 days?",
+
                "What is RSI of NVDA?",
                "Analyze NVDA RSI and MACD and give me recommendation",
                ]
