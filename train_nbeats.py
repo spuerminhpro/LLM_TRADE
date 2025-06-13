@@ -36,7 +36,7 @@ from pytorch_lightning.callbacks import EarlyStopping
 from darts.metrics import mape
 
 key_file_name = 'api_key'
-path = '/mnt/sda1/PythonProject/LLM_TRADE'  # use your path to where you
+path = 'C:/Users/phann/Documents/LLM_mentor/LLM_TRADE'  # use your path to where you
 config = configparser.ConfigParser()
 config.read(path+'/'+ key_file_name) 
 api_key = config['openai']['api_key'] 
@@ -50,7 +50,7 @@ def get_historical_data(symbol: str) -> pd.DataFrame:
     Fetch historical closing prices from FMP API.
     Returns DataFrame with 'date' and 'close' columns, ensuring daily frequency.
     """
-    start_date = "2015-06-01"  # Fetch from early April to get >30 days
+    start_date = "2022-06-01"  # Fetch from early April to get >30 days
     url = f"https://financialmodelingprep.com/api/v3/historical-price-full/{symbol}?from={start_date}&apikey={fmp_key}"
     try:
         response = requests.get(url)
@@ -80,14 +80,21 @@ def forecast_and_plot(symbol: str, forecast_horizon: int = 100):
             return
         
         print(f"Data range: {df['date'].min()} to {df['date'].max()}")
-        sma_period = 14
-        df['sma_50'] = talib.SMA(df['close'], timeperiod=sma_period)
-        df = df.dropna(subset=['sma_50'])
-        # Bước 2: Chuẩn bị TimeSeries
+        
+        # Tính toán cả SMA50 và SMA200
+        sma_period_50 = 50
+        sma_period_200 = 200
+        df['sma_50'] = talib.SMA(df['close'], timeperiod=sma_period_50)
+        df['sma_200'] = talib.SMA(df['close'], timeperiod=sma_period_200)
+        
+        # Xóa các dòng có giá trị NaN
+        df = df.dropna(subset=['sma_50', 'sma_200'])
+        
+        # Bước 2: Chuẩn bị TimeSeries với cả SMA50 và SMA200
         series = TimeSeries.from_dataframe(
             df,
             time_col='date',
-            value_cols='sma_50',
+            value_cols=['sma_50', 'sma_200'],
             fill_missing_dates=True,
             freq='D'
         )
@@ -104,12 +111,12 @@ def forecast_and_plot(symbol: str, forecast_horizon: int = 100):
         
         # Bước 3: Khởi tạo và huấn luyện mô hình N-BEATS
         model = NBEATSModel(
-            input_chunk_length=30,  # Tăng để bắt xu hướng dài hạn
+            input_chunk_length=60,  # Tăng để bắt xu hướng dài hạn
             output_chunk_length=forecast_horizon,
-            n_epochs=1000,
+            n_epochs=10,
             random_state=42)
 
-        model.fit(train,val_series=val, verbose=True)
+        model.fit(train, val_series=val, verbose=True)
 
         # Save model weights
         model_dir = "saved_models_NBEATS"
@@ -127,26 +134,47 @@ def forecast_and_plot(symbol: str, forecast_horizon: int = 100):
         error = mape(val_actual, val_forecast)
         print(f"MAPE on validation set: {error:.2f}%")
         
-        # Bước 5: Dự báo tương lai
-        forecast_scaled = model.predict(n=forecast_horizon,series=series_scaled)
+        # Bước 5: Dự báo tương lai - Sử dụng cả train và validation data
+        last_point = series_scaled
+        # Kết hợp train và validation để có dữ liệu mới nhất
+        forecast_scaled = model.predict(n=forecast_horizon, series=series_scaled)
         forecast = scaler.inverse_transform(forecast_scaled)
         
         # Bước 6: Chuẩn bị dữ liệu để vẽ biểu đồ
         historical_dates = series.time_index
-        historical_values = series.values().flatten()
-        val_dates = val.time_index
-        val_values = val_actual.values().flatten()
-        val_forecast_values = val_forecast.values().flatten()
-        forecast_dates = forecast.time_index
-        forecast_values = forecast.values().flatten()
+        historical_values_sma50 = series.values()[:, 0]  # Lấy giá trị SMA50
+        historical_values_sma200 = series.values()[:, 1]  # Lấy giá trị SMA200
         
-        # Bước 7: Vẽ biểu đồ
-        plt.figure(figsize=(12, 6))
-        plt.plot(historical_dates, historical_values, label='Historical Data', color='blue')
-        plt.plot(val_dates, val_values, label=' ', color='green')
-        plt.plot(val_dates, val_values, label='Validation Data', color='green')
-        plt.plot(val_dates, val_forecast_values, label='Validation Forecast', color='orange', linestyle='--')
-        plt.plot(forecast_dates, forecast_values, label='Future Forecast', color='red', linestyle='--')
+        val_dates = val.time_index
+        val_values_sma50 = val_actual.values()[:, 0]
+        val_values_sma200 = val_actual.values()[:, 1]
+        
+        val_forecast_values_sma50 = val_forecast.values()[:, 0]
+        val_forecast_values_sma200 = val_forecast.values()[:, 1]
+        
+        forecast_dates = forecast.time_index
+        forecast_values_sma50 = forecast.values()[:, 0]
+        forecast_values_sma200 = forecast.values()[:, 1]
+        
+        # Bước 7: Vẽ biểu đồ cho cả SMA50 và SMA200
+        plt.figure(figsize=(15, 8))
+        
+        # Vẽ dữ liệu lịch sử
+        plt.plot(historical_dates, historical_values_sma50, label='Historical SMA50', color='blue', alpha=0.7)
+        plt.plot(historical_dates, historical_values_sma200, label='Historical SMA200', color='purple', alpha=0.7)
+        
+        # Vẽ dữ liệu validation
+        plt.plot(val_dates, val_values_sma50, label='Validation SMA50', color='green', alpha=0.7)
+        plt.plot(val_dates, val_values_sma200, label='Validation SMA200', color='orange', alpha=0.7)
+        
+        # Vẽ dự báo validation
+        plt.plot(val_dates, val_forecast_values_sma50, label='Validation Forecast SMA50', color='green', linestyle='--')
+        plt.plot(val_dates, val_forecast_values_sma200, label='Validation Forecast SMA200', color='orange', linestyle='--')
+        
+        # Vẽ dự báo tương lai
+        plt.plot(forecast_dates, forecast_values_sma50, label='Future Forecast SMA50', color='red', linestyle='--')
+        plt.plot(forecast_dates, forecast_values_sma200, label='Future Forecast SMA200', color='brown', linestyle='--')
+        
         plt.title(f'Stock Price Forecast for {symbol} (MAPE: {error:.2f}%)')
         plt.xlabel('Date')
         plt.ylabel('Price (USD)')
@@ -157,9 +185,11 @@ def forecast_and_plot(symbol: str, forecast_horizon: int = 100):
         plt.savefig(f'{symbol}_forecast.png')
         
         # In kết quả dự báo tương lai
-        print(f"Forecast for {symbol} (next {forecast_horizon} days):")
-        for date, price in zip(forecast_dates, forecast_values):
-            print(f"{date.date()}: ${price:.2f}")
+        print(f"\nForecast for {symbol} (next {forecast_horizon} days):")
+        print("Date\t\tSMA50 Forecast\tSMA200 Forecast")
+        print("-" * 50)
+        for i in range(len(forecast_dates)):
+            print(f"{forecast_dates[i].date()}\t${forecast_values_sma50[i]:.2f}\t\t${forecast_values_sma200[i]:.2f}")
         
     except Exception as e:
         print(f"Error processing {symbol}: {str(e)}")

@@ -28,11 +28,13 @@ from pydantic import BaseModel
 from darts.models import RNNModel, NBEATSModel, TransformerModel, TCNModel
 from darts.dataprocessing.transformers import Scaler
 from darts.metrics import mape
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 # Import tools from tool.py
 ## Retrieve API Keys and start OpenAI session
 #  retrieve keys:
 key_file_name = 'api_key'
-path = '/mnt/sda1/PythonProject/LLM_TRADE'  # use your path to where you
+path = r'C:\Users\phann\Documents\LLM_mentor\LLM_TRADE'  # use your path to where you
 config = configparser.ConfigParser()
 config.read(path+'/'+ key_file_name) 
 api_key = config['openai']['api_key'] 
@@ -83,6 +85,14 @@ def get_historical_data(symbol: str) -> pd.DataFrame:
     except Exception as e:
         print(f"Error fetching historical data for {symbol}: {e}")
         return pd.DataFrame()
+
+def get_rsi_data(symbol: str, days: int = 14) -> dict:
+    df = get_historical_data(symbol)
+    if df.empty:
+        return {"error": f"No historical data for symbol: {symbol}"}
+    close_np = df["close"].to_numpy(dtype='float64')
+    rsi = talib.RSI(close_np, timeperiod=days)
+    return {"symbol": symbol.upper(), "RSI": round(rsi[-1], 2)}
 
 @function_tool
 def get_stock_company_info(symbol: str) -> dict:
@@ -160,7 +170,7 @@ def get_stock_technical(symbol: str) -> dict:
 
 def get_model_path(symbol: str, model_type: str) -> str:
     """Generate a unique path for saving/loading model weights."""
-    model_dir = "/mnt/sda1/PythonProject/LLM_TRADE/saved_models_NBEATS"
+    model_dir = r"C:\Users\phann\Documents\LLM_mentor\LLM_TRADE\saved_models_NBEATS"
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
     # Use .pt extension for NBEATS model, .pkl for others
@@ -222,7 +232,7 @@ def get_stock_forecast(symbol: str, horizon: int = 5, model_type: str = 'nbeats'
                 model = NBEATSModel(
                     input_chunk_length=input_chunk_length,
                     output_chunk_length=horizon,
-                    n_epochs=1000,
+                    n_epochs=100,
                     random_state=42
                 )
             elif model_type == 'transformer':
@@ -249,6 +259,140 @@ def get_stock_forecast(symbol: str, horizon: int = 5, model_type: str = 'nbeats'
         return {"symbol": symbol.upper(), "forecast_sma_50": [round(sma, 2) for sma in predicted_sma]}
     except Exception as e:
         return {"error": f"Error forecasting for symbol {symbol} with model {model_type}: {str(e)}"}
+
+@function_tool
+def RSI_analysis(symbol: str, days: int = 14) -> dict:
+    df = get_historical_data(symbol)
+    if df.empty:
+        return {"error": f"No historical data for symbol: {symbol}"}
+    close_np = df["close"].to_numpy(dtype='float64')
+    rsi = talib.RSI(close_np, timeperiod=days)
+    
+    current_rsi = rsi[-1]
+    previous_rsi = rsi[-2]
+    
+    # Tính toán xu hướng RSI
+    rsi_trend = current_rsi - previous_rsi
+    
+    # Phân tích tín hiệu
+    signals = []
+    
+    # Tín hiệu quá mua/quá bán
+    if current_rsi > 80:
+        signals.append("Overbought - SELL")
+    elif current_rsi < 20:
+        signals.append("Oversold - BUY")
+    
+    # Tín hiệu xu hướng
+    if 40 <= previous_rsi <= 50 and current_rsi < 40:
+        signals.append("RSI down from neutral - SELL")
+    elif 50 <= previous_rsi <= 60 and current_rsi > 60:
+        signals.append("RSI up from neutral - BUY")
+    
+    # Tín hiệu vùng lợi nhuận
+    if previous_rsi >60 and 70 <= current_rsi <= 80:
+        signals.append("Profit zone - Consider closing Buy")
+    if previous_rsi < 40 and 20 <= current_rsi <= 30:
+        signals.append("Profit zone - Consider closing SELL")
+    
+    return {
+        "symbol": symbol.upper(),
+        "RSI": round(current_rsi, 2),
+        "RSI_trend": round(rsi_trend, 2),
+        "signals": signals if signals else ["Neutral - HOLD"]
+    }
+
+@function_tool
+def get_stock_macd_rsi(symbol: str) -> dict:
+    """
+    Calculate MACD and RSI indicators and detect trading signals.
+    Returns stock price, MACD, RSI, and signals.
+    """
+    try:
+        df = get_historical_data(symbol)
+        if df.empty:
+            return {"error": f"No historical data for symbol: {symbol}"}
+        
+        prices = df["close"].to_numpy(dtype='float64')
+        if len(prices) < 26:
+            return {"error": f"Not enough data to compute indicators for {symbol} (need at least 26 days)"}
+        
+        # Calculate MACD
+        macd, macdsignal, macdhist = talib.MACD(prices, fastperiod=12, slowperiod=26, signalperiod=9)
+        # Calculate RSI
+        rsi = talib.RSI(prices, timeperiod=14)
+        
+        # Detect signals
+        signals = [None] * len(macd)
+        for i in range(1, len(macd)):
+            if not np.isnan(macd[i]) and not np.isnan(macdsignal[i]) and not np.isnan(rsi[i]):
+                if macd[i-1] < macdsignal[i-1] and macd[i] > macdsignal[i] and rsi[i] < 70:
+                    signals[i] = 'BUY'
+                elif macd[i-1] > macdsignal[i-1] and macd[i] < macdsignal[i] and rsi[i] > 30:
+                    signals[i] = 'SELL'
+        
+        # Generate plot
+        fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.1,
+                            subplot_titles=(f'Giá Cổ Phiếu {symbol}', 'MACD', 'RSI'),
+                            row_heights=[0.5, 0.3, 0.2])
+        
+        # Stock price
+        fig.add_trace(go.Scatter(x=df['date'], y=df['close'], mode='lines', name='Giá Đóng Cửa', line=dict(color='blue')),
+                      row=1, col=1)
+        
+        # Buy/Sell signals
+        df['signals'] = signals
+        buy_signals = df[df['signals'] == 'BUY']
+        sell_signals = df[df['signals'] == 'SELL']
+        fig.add_trace(go.Scatter(x=buy_signals['date'], y=buy_signals['close'], mode='markers', name='Tín Hiệu Mua',
+                                 marker=dict(symbol='triangle-up', size=10, color='green')), row=1, col=1)
+        fig.add_trace(go.Scatter(x=sell_signals['date'], y=sell_signals['close'], mode='markers', name='Tín Hiệu Bán',
+                                 marker=dict(symbol='triangle-down', size=10, color='red')), row=1, col=1)
+        
+        # MACD
+        fig.add_trace(go.Scatter(x=df['date'], y=macd, mode='lines', name='Đường MACD', line=dict(color='blue')),
+                      row=2, col=1)
+        fig.add_trace(go.Scatter(x=df['date'], y=macdsignal, mode='lines', name='Đường Tín Hiệu', line=dict(color='red')),
+                      row=2, col=1)
+        fig.add_trace(go.Bar(x=df['date'], y=macdhist, name='Histogram', marker=dict(color='gray', opacity=0.5)),
+                      row=2, col=1)
+        
+        # RSI
+        fig.add_trace(go.Scatter(x=df['date'], y=rsi, mode='lines', name='RSI', line=dict(color='purple')),
+                      row=3, col=1)
+        fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Quá Mua", row=3, col=1)
+        fig.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Quá Bán", row=3, col=1)
+        
+        # Layout
+        fig.update_layout(
+            title=f'Phân Tích {symbol} với MACD và RSI',
+            yaxis_title='Giá (USD)',
+            yaxis2_title='MACD',
+            yaxis3_title='RSI',
+            xaxis3_title='Ngày',
+            height=1000,
+            showlegend=True,
+            template='plotly_white'
+        )
+        
+        # Save plot
+        plot_file = f"{symbol.lower()}_macd_rsi.html"
+        fig.write_html(plot_file)
+        
+        # Return results
+        return {
+            "symbol": symbol.upper(),
+            "last_price": round(prices[-1], 2),
+            "last_macd": round(macd[-1], 2) if not np.isnan(macd[-1]) else None,
+            "last_signal": round(macdsignal[-1], 2) if not np.isnan(macdsignal[-1]) else None,
+            "last_histogram": round(macdhist[-1], 2) if not np.isnan(macdhist[-1]) else None,
+            "last_rsi": round(rsi[-1], 2) if not np.isnan(rsi[-1]) else None,
+            "last_signal_action": signals[-1],
+            "plot_file": plot_file
+        }
+    except Exception as e:
+        return {"error": f"Error calculating MACD and RSI for {symbol}: {str(e)}"}
+    
 
 # Guardrail: block crypto
 class GuardrailOutput(BaseModel):
@@ -313,6 +457,15 @@ You are a stock trading assistant focused on providing accurate and concise stoc
 - Providing BUY, SELL, or HOLD recommendations only when explicitly requested, based solely on retrieved data.
 - Escalating legal or regulatory questions to the Compliance Agent.
 - Refraining from answering non-investment-related queries.
+RSI analysis:
+- Use RSI_analysis to analyze the RSI of the stock.
+- Report the RSI analysis in the to user the Evaluate RSI and give them recommendation with explaination.
+MACD analysis:
+- Using get_stock_macd_rsi tools to fetch and summarize stock data, including technical indicators (MACD, RSI), company information, and forecasts.
+- Reporting results in clear markdown format, using tables for numerical data.
+- Providing BUY, SELL, or HOLD recommendations only when explicitly requested, based solely on retrieved data.
+- Analyzing MACD and RSI indicators to detect trading signals (e.g., MACD crossovers, RSI overbought/oversold).
+- Generating interactive plots for MACD and RSI when requested, saved as HTML files.
 
 Rules and constraints:
 - Always use tools for real-time or provided data; never guess or assume information.
@@ -322,7 +475,7 @@ Rules and constraints:
 
 Your role is to assist with data-driven stock trading decisions, not to provide general advice or opinions.
 """,
-    tools=[get_stock_company_info, get_stock_technical],
+    tools=[get_stock_company_info, get_stock_technical, RSI_analysis, get_stock_macd_rsi],
     input_guardrails=[InputGuardrail(guardrail_function=reject_invalid_tickers)],
     handoffs=[compliance_handoff, trading_assistant_forecast],
     handoff_description="Compliance_agent",
@@ -340,8 +493,8 @@ async def main():
     output = []
     queries = ["What is the price of NVDA?",
                "Forecast NVDA price after 50 days?",
-               "What is the price of NVDA?",
-               "Forecast NVDA price after 50 days?",
+               "What is RSI of NVDA?",
+               "Analyze NVDA RSI and MACD and give me recommendation",
                ]
     for i, query in enumerate(queries):
         try:
