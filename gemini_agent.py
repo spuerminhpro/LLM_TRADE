@@ -19,7 +19,6 @@ import talib # terminal install -> pip install TA-Lib
 # Gemini libs
 import google.generativeai as genai
 
-# Darts and Plotly for tools
 try:
     from darts import TimeSeries
     from darts.models import RNNModel, NBEATSModel, TransformerModel, TCNModel
@@ -36,8 +35,7 @@ import gradio as gr
 
 warnings.filterwarnings('ignore')
 
-# ===== 1. CẤU HÌNH API KEYS =====
-    # Lưu ý: Sửa lại đường dẫn và tên file key cho phù hợp với máy của bạn
+
 try:
     key_file_name = 'apikey'  # Sử dụng tên file thực tế
     path = os.getcwd()  # Sử dụng thư mục hiện tại
@@ -52,11 +50,8 @@ try:
     fmp_key = config['financialmodelingprep']['api_key']
 except Exception as e:
     print(f"Lỗi khi đọc file API key: {e}")
-    print("Hãy đảm bảo file 'apikey' tồn tại và có section [google] và [financialmodelingprep]")
+    print("Hãy đảm bảo file text 'apikey' tồn tại và có section [google] và [financialmodelingprep]")
     exit()
-
-# ===== 2. CÁC HÀM CÔNG CỤ (TOOLS) - Giữ nguyên logic, bỏ decorator =====
-# Các hàm công cụ của bạn đã rất tốt, chúng ta chỉ cần giữ lại logic cốt lõi.
 
 def get_historical_data(symbol: str) -> pd.DataFrame:
     """
@@ -78,6 +73,8 @@ def get_historical_data(symbol: str) -> pd.DataFrame:
         df = df.reindex(date_range, method='ffill')
         df.reset_index(inplace=True)
         df = df.rename(columns={'index': 'date'}, inplace=False)
+        # Lưu dữ liệu vào file csv
+        df.to_csv(f'{symbol}_historical_data.csv', index=False)
         return df
     except Exception as e:
         print(f"Error fetching historical data for {symbol}: {e}")
@@ -227,7 +224,6 @@ def get_stock_macd_rsi_with_plot(symbol: str) -> dict:
         }
     except Exception as e: return {"error": f"Error generating plot for {symbol}: {str(e)}"}
 
-# ===== 3. GUARDRAIL VÀ LOGIC AGENT VỚI GEMINI =====
 crypto_keywords = {"bitcoin", "btc", "crypto", "doge", "solana", "eth", "ethereum"}
 
 def check_guardrail(query: str) -> bool:
@@ -238,9 +234,6 @@ def check_guardrail(query: str) -> bool:
     return False
 
 def run_gemini_agent(query: str):
-    """
-    Chạy một agent Gemini duy nhất với tất cả các tool, mô phỏng vòng lặp tool-calling.
-    """
     # 3.1. Xác định Agent và các tool
     tools = [
         get_stock_company_info,
@@ -283,13 +276,13 @@ def run_gemini_agent(query: str):
         
         print(f"Tool Call: {tool_name}({tool_args})")
         
-        # Tìm và thực thi hàm tương ứng
+        # Tìm sử dụng tool
         tool_function = next((t for t in tools if t.__name__ == tool_name), None)
         
         if tool_function:
             try:
                 tool_output = tool_function(**tool_args)
-                # Gửi kết quả của tool trở lại cho model
+                # Gửi kết quả của tool 
                 response = chat.send_message(
                     genai.Part(
                         function_response=genai.protos.FunctionResponse(
@@ -300,7 +293,6 @@ def run_gemini_agent(query: str):
                 )
             except Exception as e:
                 print(f"Error executing tool {tool_name}: {e}")
-                # Báo lỗi lại cho model
                 response = chat.send_message(
                      genai.Part(
                         function_response=genai.protos.FunctionResponse(
@@ -318,7 +310,6 @@ def run_gemini_agent(query: str):
 
 chat_memory = []  # Chat memory
 
-# ===== 4. WORKFLOW CHÍNH =====
 def main():
     # Danh sách các câu hỏi cũ bây giờ được dùng làm ví dụ
     example_queries = [
@@ -378,13 +369,11 @@ def main():
             # Xóa nội dung trong ô nhập liệu và cập nhật chatbot
             return "", chat_history
 
-        # Gán sự kiện click/submit cho hàm respond
         send_btn.click(respond, inputs=[msg, chatbot], outputs=[msg, chatbot])
         msg.submit(respond, inputs=[msg, chatbot], outputs=[msg, chatbot])
         
-        # Chức năng lưu đoạn hội thoại
         with gr.Row():
-            save_btn = gr.Button("💾 Lưu đoạn hội thoại")
+            save_btn = gr.Button(" Lưu đoạn hội thoại")
             status_text = gr.Textbox(label="Trạng thái", interactive=False, placeholder="Trạng thái lưu...")
 
         def save_chat():
@@ -394,8 +383,8 @@ def main():
                 with open("chatlog.txt", "w", encoding="utf-8") as f:
                     f.write("=== LỊCH SỬ HỘI THOẠI ===\n\n")
                     for user_msg, bot_msg in chat_memory:
-                        f.write(f"👤 Người dùng: {user_msg}\n")
-                        f.write(f"🤖 Bot: {bot_msg}\n")
+                        f.write(f"Người dùng: {user_msg}\n")
+                        f.write(f" Bot: {bot_msg}\n")
                         f.write("-" * 30 + "\n")
                 return " Đã lưu thành công vào file chatlog.txt"
             except Exception as e:
